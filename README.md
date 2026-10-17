@@ -27,7 +27,7 @@ Flashing back your backup after a mode B boot doesn't add risk. It only shows wh
 ## Needs
 
 - Pomona 5250 clip, Pico with `pico-serprog` (or CH347), `flashrom`, Python 3
-- `D6521000V.075`:
+- `D6521000V.075`, AMD's MI250 firmware with the board ID 16 tables. It's inside AMD's `amdfwflash` package. Download it and extract the file:
 
   ```
   wget https://repo.radeon.com/fwupdater/amdfwflash/latest/deb/pool/main/a/amdfwflash/amdfwflash_2.0.714.477_amd64.deb
@@ -37,7 +37,9 @@ Flashing back your backup after a mode B boot doesn't add risk. It only shows wh
 
 ## 1. Wire
 
-Module unpowered, out of the baseboard. 3.3 V only. Pin 1 is at the dot.
+The module has two identical flash chips: SST26VF016B, SOIC-8, marked `26F016B`. They sit on the heatsink side next to the GPU frame, so the heatsink has to come off. Probably one per GPU die (unconfirmed), and normally both hold the same data. Back up and flash both. Pick one as chip 1 and the other as chip 2, and mark them so you don't mix them up later.
+
+Module unpowered, out of the baseboard. 3.3 V only. Pin 1 is at the dot. Clip onto one chip at a time.
 
 | Chip pin | Signal | Pico |
 |---|---|---|
@@ -52,6 +54,8 @@ Module unpowered, out of the baseboard. 3.3 V only. Pin 1 is at the dot.
 
 ## 2. Back up both chips
 
+Clip onto chip 1 and read it three times:
+
 ```
 flashrom -p serprog:dev=/dev/ttyACM0:115200,spispeed=12M -c SST26VF016B -r chip1_a.bin
 flashrom -p serprog:dev=/dev/ttyACM0:115200,spispeed=12M -c SST26VF016B -r chip1_b.bin
@@ -59,23 +63,43 @@ flashrom -p serprog:dev=/dev/ttyACM0:115200,spispeed=12M -c SST26VF016B -r chip1
 sha256sum chip1_*.bin
 ```
 
-Hashes must match. Repeat for chip 2. Keep a copy elsewhere.
+All three hashes must match. If not, reseat the clip and read again.
+
+Move the clip to chip 2 and do the same, naming the files `chip2_a.bin`, `chip2_b.bin`, `chip2_c.bin`.
+
+`chip1_a.bin` and `chip2_a.bin` are your backups. Keep copies somewhere other than this computer.
 
 CH347: `-p ch347_spi`.
 
 ## 3. Build
 
-Mode A:
-
 ```
 python3 -I make_hybrid.py --base chip1_a.bin --compare chip2_a.bin --donor D6521000V.075 --out hybrid.bin
 ```
 
-Mode B (only if mode A failed): add `--full` and use a new `--out` name.
+| Option | What it is |
+|---|---|
+| `--base` | Your backup of chip 1. The output is this file with the copied parts replaced. |
+| `--compare` | Your backup of chip 2. Optional. Only used to warn if the two chips differ. |
+| `--donor` | `D6521000V.075` (download it as shown under Needs). The parts are copied from here. Checked by hash. |
+| `--out` | The file to write. Must not exist yet. Your backups are never modified. |
+| `--full` | Mode B. Leave it off for mode A. |
 
-Must end with `Wrote ...`. If the chips differ, also build one from `--base chip2_a.bin` for chip 2.
+The script only writes a file. It doesn't flash anything.
+
+It prints each check as `ok`, `WARN` or `FAIL`. Any `FAIL` stops it and nothing is written. Success ends with `Wrote hybrid.bin` and its sha256.
+
+If it warns that the chips differ, build a second image for chip 2:
+
+```
+python3 -I make_hybrid.py --base chip2_a.bin --donor D6521000V.075 --out hybrid2.bin
+```
+
+Mode B (only if mode A failed): the same command with `--full` added and a new `--out` name, for example `--out hybrid_full.bin`.
 
 ## 4. Flash both chips
+
+Clip onto chip 1:
 
 ```
 flashrom -p serprog:dev=/dev/ttyACM0:115200,spispeed=12M -c SST26VF016B -w hybrid.bin
@@ -83,7 +107,9 @@ flashrom -p serprog:dev=/dev/ttyACM0:115200,spispeed=12M -c SST26VF016B -r check
 sha256sum hybrid.bin check.bin
 ```
 
-Must say `VERIFIED` and hashes must match.
+The write must say `VERIFIED` and both hashes must match.
+
+Move the clip to chip 2 and run the same three commands. If you built `hybrid2.bin` in step 3, use it for chip 2 instead of `hybrid.bin`.
 
 ## 5. Test
 
@@ -97,4 +123,4 @@ If mode A doesn't boot: flash the backup (Undo), confirm it boots, then decide o
 
 ## Undo
 
-Flash `chip1_a.bin` and `chip2_a.bin` back as in step 4.
+Flash `chip1_a.bin` to chip 1 and `chip2_a.bin` to chip 2, as in step 4.
